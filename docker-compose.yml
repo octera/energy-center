@@ -1,0 +1,33 @@
+version: '2'
+volumes:
+  settings:
+services:
+  fbcp:
+    build: ./fbcp
+    restart: on-failure
+    privileged: true
+    environment:
+      - FBCP_DISPLAY=waveshare35b-ili9486
+  wpe:
+    restart: always
+    build: ./wpe
+    privileged: true
+    depends_on:
+      - webpages
+    ports:
+      - 8080:8080
+    environment:
+      - WPE_URL=http://webpages:3000/
+  powertag:
+    build: ./powertag
+    restart: always
+    privileged: true
+  webpages:
+    build: ./webpages
+    restart: always
+    ports:
+      - 3000:3000
+  teleinfo:
+    build: ./teleinfo
+    restart: always
+    privileged: true

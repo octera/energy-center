@@ -1,0 +1,24 @@
+FROM balenalib/%%BALENA_MACHINE_NAME%%-debian-golang:1.19-buster-build as build
+
+ENV UDEV=on
+
+RUN mkdir /build/
+WORKDIR /build/
+
+ADD go.mod .
+ADD go.sum .
+ADD teleinfo2mqtt.go .
+
+RUN go build
+RUN ls -la
+
+FROM balenalib/%%BALENA_MACHINE_NAME%%-debian:buster as run
+
+RUN mkdir /teleinfo
+WORKDIR /teleinfo
+COPY --from=build /build/teleinfo2mqtt .
+
+CMD ["/teleinfo/teleinfo2mqtt"]
+
+
+

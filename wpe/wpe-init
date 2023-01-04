@@ -1,0 +1,22 @@
+#!/bin/sh
+
+udevd &
+udevadm trigger
+
+#fbcp &
+
+# Set the backlight brightness of a Raspberry touchscreen
+# The environment variable RPI_BACKLIGHT can be set to a value 0-255.
+export RPI_BACKLIGHT=${RPI_BACKLIGHT:-255}
+if [ -f /sys/class/backlight/rpi_backlight/brightness ]; then
+	echo $RPI_BACKLIGHT > /sys/class/backlight/rpi_backlight/brightness
+fi
+
+# Enable touch screen
+export WPE_BCMRPI_TOUCH=1
+
+# Start browser
+cog --cookie-store=always $WPE_URL &
+
+# Start Tohora
+./tohora 8080 cog

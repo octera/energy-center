@@ -1,0 +1,34 @@
+FROM balenalib/%%BALENA_MACHINE_NAME%%-debian-golang:1.19-buster-build as build
+
+ENV UDEV=on
+
+RUN mkdir /build
+
+WORKDIR /build
+
+RUN git clone https://github.com/jlama/powertagd.git
+RUN cd /build/powertagd/src && make
+
+RUN mkdir /build/powertag2mqtt
+WORKDIR /build/powertag2mqtt
+
+ADD go.mod .
+ADD go.sum .
+ADD powertag2mqtt.go .
+
+RUN go build
+
+FROM balenalib/%%BALENA_MACHINE_NAME%%-debian:buster as run
+
+RUN mkdir /powertag
+WORKDIR /powertag
+ADD run.sh .
+COPY --from=build /build/powertag2mqtt/powertag2mqtt .
+COPY --from=build /build/powertagd/src/powertagd .
+
+RUN chmod +x run.sh
+
+CMD ["/powertag/run.sh"]
+
+
+
