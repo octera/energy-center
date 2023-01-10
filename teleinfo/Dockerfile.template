@@ -1,7 +1,5 @@
 FROM balenalib/%%BALENA_MACHINE_NAME%%-debian-golang:1.19-buster-build as build
 
-ENV UDEV=on
-
 RUN mkdir /build/
 WORKDIR /build/
 
@@ -13,6 +11,10 @@ RUN go build
 RUN ls -la
 
 FROM balenalib/%%BALENA_MACHINE_NAME%%-debian:buster as run
+
+ENV UDEV=1
+
+COPY udev-rules/ /etc/udev/rules.d/
 
 RUN mkdir /teleinfo
 WORKDIR /teleinfo

@@ -37,7 +37,7 @@ func main() {
 	var baud int
 
 	flag.StringVar(&url, "url", "192.168.0.20:1883", "mqtt server")
-	flag.StringVar(&port, "port", "/dev/ttyUSB0", "serial port")
+	flag.StringVar(&port, "port", "/ttyUSB-teleinfo", "serial port")
 	flag.IntVar(&baud, "baud", 9600, "baud")
 
 	flag.Parse()

@@ -1,2 +1,2 @@
 #!/bin/bash
-/powertag/powertagd -d /dev/ttyACM0 | /powertag/powertag2mqtt
+/powertag/powertagd -d /dev/ttyUSB-powertag | /powertag/powertag2mqtt
