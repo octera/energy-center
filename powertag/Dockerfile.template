@@ -1,4 +1,4 @@
-FROM balenalib/%%BALENA_MACHINE_NAME%%-debian-golang:1.19-buster-build as build
+FROM balenalib/%%BALENA_MACHINE_NAME%%-alpine-golang:1.19-3.16-build as build
 
 RUN mkdir /build
 
@@ -16,7 +16,7 @@ ADD powertag2mqtt.go .
 
 RUN go build
 
-FROM balenalib/%%BALENA_MACHINE_NAME%%-debian:buster as run
+FROM balenalib/%%BALENA_MACHINE_NAME%%-alpine:3.16 as run
 
 ENV UDEV=1
 

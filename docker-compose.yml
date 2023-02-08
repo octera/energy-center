@@ -31,3 +31,7 @@ services:
     build: ./teleinfo
     restart: always
     privileged: true
+  fakeSungrowMeter:
+    build: ./fakeSungrowMeter
+    restart: always
+    privileged: true

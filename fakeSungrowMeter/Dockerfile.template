@@ -12,13 +12,11 @@ FROM balenalib/%%BALENA_MACHINE_NAME%%-alpine:3.16 as run
 
 ENV UDEV=1
 
-COPY udev-rules/ /etc/udev/rules.d/
+RUN mkdir /fakeSungrowMeter
+WORKDIR /fakeSungrowMeter
+COPY --from=build /build/fakeSungrowMeter .
 
-RUN mkdir /teleinfo
-WORKDIR /teleinfo
-COPY --from=build /build/teleinfo2mqtt .
-
-CMD ["/teleinfo/teleinfo2mqtt"]
+CMD ["/fakeSungrowMeter/fakeSungrowMeter"]
 
 
 

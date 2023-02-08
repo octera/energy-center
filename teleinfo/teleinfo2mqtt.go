@@ -1,15 +1,13 @@
 package main
 
 import (
-	"bufio"
-	"errors"
 	"flag"
 	"fmt"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/tarm/serial"
 	"log"
 	"os"
 	"strings"
+	"teleinfo2mqtt/teleinfo"
 	"time"
 )
 
@@ -20,34 +18,29 @@ func watchdogFired() {
 	log.Fatal("Watchdog fired, killing process")
 	os.Exit(4)
 }
-func main2() {
-	toto := "EASF01     021456863       E"
-	res, err := parseLine(toto)
-	if err != nil {
-		fmt.Printf("Err: %s\n", err)
-
-	} else {
-		fmt.Printf("%s: %s\n", res[0], res[1])
-	}
-}
 
 func main() {
 	var url string
-	var port string
-	var baud int
+	var serialDevice string
+	var mode string
 
 	flag.StringVar(&url, "url", "192.168.0.20:1883", "mqtt server")
-	flag.StringVar(&port, "port", "/ttyUSB-teleinfo", "serial port")
-	flag.IntVar(&baud, "baud", 9600, "baud")
+	flag.StringVar(&serialDevice, "port", "/dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0", "serial port")
+	flag.StringVar(&mode, "mode", "standard", "Teleinfo mode standard or historic")
 
 	flag.Parse()
 
-	c := &serial.Config{Name: port, Baud: baud, Size: 7, Parity: serial.ParityEven, StopBits: serial.Stop1}
-	s, err := serial.OpenPort(c)
-	if err != nil {
-		log.Fatal(err)
-		os.Exit(2)
+	if mode != "historic" && mode != "standard" {
+		flag.PrintDefaults()
+		os.Exit(1)
 	}
+
+	port, err := teleinfo.OpenPort(serialDevice, mode)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	defer port.Close()
 
 	mqtt.ERROR = log.New(os.Stdout, "", 0)
 	opts := mqtt.NewClientOptions().AddBroker(url).SetClientID(ProgNameMqtt)
@@ -63,38 +56,28 @@ func main() {
 
 	watchdog := time.AfterFunc(WatchdogTimeout, watchdogFired)
 
-	lnscan := bufio.NewScanner(s)
-	for lnscan.Scan() {
-		line := lnscan.Text()
-		parsed, err := parseLine(line)
-		if err != nil {
-			fmt.Printf("%s: Bad paquet received:  -->%s<--\n", ProgNameMqtt, line)
-		}
-		if parsed != nil {
-			//fmt.Printf("%s: Going to publish on '%s' ->%s<-\n", ProgNameMqtt, parsed[0], parsed[1])
-			token := client.Publish("teleinfo/"+parsed[0], 0, false, parsed[1])
-			token.Wait()
-		}
-		watchdog.Reset(WatchdogTimeout)
-	}
+	// Read Teleinfo frames and send them into mqtt
+	go handleFrame(teleinfo.NewReader(port, &mode), client, watchdog)
+
+	<-(chan int)(nil) //trick to wait for ever
+
 	fmt.Printf("%s: Reached end of app, should not happens\n", ProgNameMqtt)
 }
 
-func parseLine(line string) ([]string, error) {
-	if len(line) < 3 {
-		return nil, nil
+func handleFrame(reader teleinfo.Reader, client mqtt.Client, watchdog *time.Timer) {
+	fmt.Printf("handleFrame\n")
+	for {
+		frame, err := reader.ReadFrame()
+		if err != nil {
+			fmt.Printf("Error reading Teleinfo frame: %s\n", err)
+			continue
+		}
+		for k, v := range frame.AsMap() {
+			key := strings.Replace(k, "+", "p", -1)
+			value := strings.TrimSpace(strings.Replace(v, "\t", " ", -1))
+			token := client.Publish("teleinfo/"+key, 0, false, value)
+			token.Wait()
+			watchdog.Reset(WatchdogTimeout)
+		}
 	}
-	//TODO manage checksum -> checksum := line[len(line)-1] // get last char which is checksum
-	line = line[:len(line)-1] //Remove last char
-	splitted := strings.Fields(line)
-	if len(splitted) < 2 {
-		return nil, errors.New("bad parse")
-	}
-	if len(splitted[0]) == 0 && len(splitted[1]) == 0 {
-		return nil, errors.New("bad length")
-	}
-	key := strings.Replace(splitted[0], "+", "p", -1)
-	value := strings.Join(splitted[1:], " ")
-	return []string{key, value}, nil
-
 }
