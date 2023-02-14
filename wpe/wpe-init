@@ -3,6 +3,7 @@
 udevd &
 udevadm trigger
 
+/wait-for-it.sh webpages:3000
 #fbcp &
 
 # Set the backlight brightness of a Raspberry touchscreen

@@ -1,5 +1,4 @@
 FROM marhoy/balena-wpe:2.32-raspberrypi3
-#FROM marhoy/balena-wpe:2.30-raspberrypi3
 
 ENV UDEV=on
 
@@ -7,6 +6,9 @@ COPY udev-rules/ /etc/udev/rules.d/
 
 COPY wpe-init /wpe-init
 RUN chmod +x /wpe-init
+
+COPY wait-for-it.sh /wait-for-it.sh
+RUN chmod +x /wait-for-it.sh
 
 CMD [ "/wpe-init" ]
 

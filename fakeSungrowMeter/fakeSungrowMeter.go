@@ -4,13 +4,14 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/goburrow/serial"
-	mbserver "github.com/tbrandon/mbserver"
 	"log"
 	"os"
 	"strconv"
 	"time"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/goburrow/serial"
+	mbserver "github.com/tbrandon/mbserver"
 )
 
 const ProgNameMqtt string = "fakeSungrowPower"
@@ -20,6 +21,8 @@ var watchdogMqtt = time.AfterFunc(WatchdogTimeout, watchdogMqttFired)
 var watchdogModbus = time.AfterFunc(WatchdogTimeout, watchdogModbusFired)
 
 var gridPower int32 = 0
+var gridIndex int32 = 0
+var injecIndex int32 = 0
 
 func watchdogMqttFired() {
 	log.Fatal("Watchdog mqtt fired, killing process")
@@ -34,6 +37,20 @@ func listenMqttGrid(client mqtt.Client) {
 	client.Subscribe("powerinfo/grid", 0, func(client mqtt.Client, msg mqtt.Message) {
 		var p, _ = strconv.Atoi(string(msg.Payload()))
 		gridPower = int32(p)
+		watchdogMqtt.Reset(WatchdogTimeout)
+	})
+}
+func listenMqttGridIndex(client mqtt.Client) {
+	client.Subscribe("powerinfo/totalIndex", 0, func(client mqtt.Client, msg mqtt.Message) {
+		var p, _ = strconv.Atoi(string(msg.Payload()))
+		gridIndex = int32(p)
+		watchdogMqtt.Reset(WatchdogTimeout)
+	})
+}
+func listenMqttInjectIndex(client mqtt.Client) {
+	client.Subscribe("powerinfo/totalInjIndex", 0, func(client mqtt.Client, msg mqtt.Message) {
+		var p, _ = strconv.Atoi(string(msg.Payload()))
+		injecIndex = int32(p)
 		watchdogMqtt.Reset(WatchdogTimeout)
 	})
 }
@@ -52,6 +69,8 @@ func main() {
 	defer modbusServer.Close()
 
 	go listenMqttGrid(mqttClient)
+	go listenMqttGridIndex(mqttClient)
+	go listenMqttInjectIndex(mqttClient)
 
 	modbusServer.RegisterFunctionHandler(3, modbusMessageHandler)
 
@@ -77,25 +96,49 @@ func modbusMessageHandler(server *mbserver.Server, frame mbserver.Framer) ([]byt
 	case 63:
 		fmt.Printf("Requesting %d with %d register count\n", register, numRegs)
 	case 10: // 12 registers
-		var toto = make([]byte, 2)
-		binary.BigEndian.PutUint16(toto, uint16(gridPower))
-		data[1] = toto[0]
-		data[2] = toto[1]
-		fmt.Printf("Requesting %d with %d register count\n", register, numRegs)
+		var byteBuffer = make([]byte, 4)
+		var indexDiv = gridIndex / 10
+		binary.BigEndian.PutUint32(byteBuffer, uint32(indexDiv)) // Current forward active total electric energy : scale is 1 increment per 10wh
+		data[1] = byteBuffer[0]
+		data[2] = byteBuffer[1]
+		data[3] = byteBuffer[2]
+		data[4] = byteBuffer[3]
+		binary.BigEndian.PutUint32(byteBuffer, uint32(0)) //Current forward active spike electric energy ?
+		data[5] = byteBuffer[0]
+		data[6] = byteBuffer[1]
+		data[7] = byteBuffer[2]
+		data[8] = byteBuffer[3]
+		binary.BigEndian.PutUint32(byteBuffer, uint32(0)) // Current forward active peak electric energy
+		data[9] = byteBuffer[0]
+		data[10] = byteBuffer[1]
+		data[11] = byteBuffer[2]
+		data[12] = byteBuffer[3]
+		binary.BigEndian.PutUint32(byteBuffer, uint32(0)) // Current forward active flat electric energy
+		data[13] = byteBuffer[0]
+		data[14] = byteBuffer[1]
+		data[15] = byteBuffer[2]
+		data[16] = byteBuffer[3]
+		binary.BigEndian.PutUint32(byteBuffer, uint32(0)) // Current forward active valley electric energy
+		data[17] = byteBuffer[0]
+		data[18] = byteBuffer[1]
+		data[19] = byteBuffer[2]
+		data[20] = byteBuffer[3]
+		binary.BigEndian.PutUint32(byteBuffer, uint32(injecIndex/10)) // total export energy ? scale is 1 increment per 10wh
+		data[21] = byteBuffer[0]
+		data[22] = byteBuffer[1]
+		data[23] = byteBuffer[2]
+		data[24] = byteBuffer[3]
 	case 97: // 3 register
-		var power = make([]byte, 2)
-		var powerB = make([]byte, 2)
-
-		var fakePower = time.Now().Hour()*60 + time.Now().Minute()
-		binary.BigEndian.PutUint16(power, uint16(fakePower*100))
-		binary.BigEndian.PutUint16(powerB, uint16(fakePower))
-
-		data[1] = power[0]
-		data[2] = power[1]
-		data[3] = powerB[0]
-		fmt.Printf("Requesting %d with %d register count - answer : %d\n", register, numRegs, fakePower)
+		var byteBuffer = make([]byte, 2)
+		binary.BigEndian.PutUint16(byteBuffer, uint16(220))
+		data[1] = byteBuffer[0] //Voltage A
+		data[2] = byteBuffer[1]
+		data[3] = 0 //Voltage B
+		data[4] = 0
+		data[5] = 0 //Voltage C
+		data[6] = 0
 	case 119: // 5 seconds -> 1 register
-		fmt.Printf("Requesting %d with %d register count\n", register, numRegs)
+		// frequency
 	case 356: // 8 register
 		watchdogModbus.Reset(WatchdogTimeout)
 		var powerB = make([]byte, 4)
