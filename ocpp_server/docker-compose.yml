@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  ocpp-server:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - MQTT_BROKER=tcp://mqtt:1883
+      - MQTT_USERNAME=
+      - MQTT_PASSWORD=
+    volumes:
+      - ./config.yaml:/root/config.yaml:ro
+    depends_on:
+      - mqtt
+    restart: unless-stopped
+    networks:
+      - ocpp-network
+
+  mqtt:
+    image: eclipse-mosquitto:2.0
+    ports:
+      - "1883:1883"
+    volumes:
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-logs:/mosquitto/log
+    restart: unless-stopped
+    networks:
+      - ocpp-network
+
+volumes:
+  mosquitto-data:
+  mosquitto-logs:
+
+networks:
+  ocpp-network:
+    driver: bridge
