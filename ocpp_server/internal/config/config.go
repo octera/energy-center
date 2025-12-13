@@ -59,9 +59,9 @@ func Load() (*Config, error) {
 	viper.SetDefault("charging.update_interval", 5)
 	viper.SetDefault("charging.station1_priority", 1)
 	viper.SetDefault("charging.station2_priority", 2)
-	viper.SetDefault("charging.pid_kp", 0.001)
-	viper.SetDefault("charging.pid_ki", 0.0001)
-	viper.SetDefault("charging.pid_kd", 0.00001)
+	viper.SetDefault("charging.pid_kp", 0.035)
+	viper.SetDefault("charging.pid_ki", 0.020)
+	viper.SetDefault("charging.pid_kd", 0.005)
 	viper.SetDefault("charging.grid_target_power", 0.0)
 
 	viper.AutomaticEnv()
