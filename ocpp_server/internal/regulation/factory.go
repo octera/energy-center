@@ -12,8 +12,9 @@ import (
 type RegulationType string
 
 const (
-	PIDRegulation    RegulationType = "pid"
-	SimpleRegulation RegulationType = "simple"
+	PIDRegulation      RegulationType = "pid"
+	DeltaPIDRegulation RegulationType = "delta_pid"
+	SimpleRegulation   RegulationType = "simple"
 )
 
 // CreateRegulator factory pour créer des régulateurs
@@ -30,6 +31,19 @@ func CreateRegulator(regulationType RegulationType, cfg *config.Config, logger *
 			ImportThreshold:  50.0,  // 50W d'import maximum
 		}
 		return NewPIDRegulator(pidConfig, logger), nil
+
+	case DeltaPIDRegulation:
+		deltaPIDConfig := DeltaPIDConfig{
+			Kp:               cfg.Charging.PIDKp,
+			Ki:               cfg.Charging.PIDKi,
+			Kd:               cfg.Charging.PIDKd,
+			SmoothingFactor:  cfg.Charging.SmoothingFactor,
+			MaxTimeGap:       60.0,  // 1 minute max entre mesures
+			SurplusThreshold: 200.0, // 200W de surplus minimum (plus stable)
+			ImportThreshold:  100.0, // 100W d'import maximum (plus stable)
+			MaxDeltaPerStep:  5.0,   // Max 5A de variation par étape
+		}
+		return NewDeltaRegulator(deltaPIDConfig, logger), nil
 
 	case SimpleRegulation:
 		simpleConfig := SimpleConfig{

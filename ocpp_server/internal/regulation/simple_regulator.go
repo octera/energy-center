@@ -45,8 +45,9 @@ func (s *SimpleRegulator) Calculate(input RegulationInput) RegulationOutput {
 		}
 
 		return RegulationOutput{
+			DeltaCurrent:  0, // Mode HC gère directement le courant cible
 			TargetCurrent: availableCurrent,
-			IsCharging:    availableCurrent > 6.0,
+			ShouldCharge:  availableCurrent > 6.0,
 			Reason:        "Off-peak mode - maximum charging",
 			DebugInfo: map[string]interface{}{
 				"mode":              "HC",
@@ -100,8 +101,9 @@ func (s *SimpleRegulator) calculateOnPeakSimple(input RegulationInput) Regulatio
 		input.GridPower, targetCurrent, s.isCharging)
 
 	return RegulationOutput{
+		DeltaCurrent:  0, // Simple régulateur calcule directement le courant cible
 		TargetCurrent: targetCurrent,
-		IsCharging:    targetCurrent > 6.0,
+		ShouldCharge:  targetCurrent > 6.0,
 		Reason:        reason,
 		DebugInfo: map[string]interface{}{
 			"grid_power":        input.GridPower,

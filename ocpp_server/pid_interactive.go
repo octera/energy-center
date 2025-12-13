@@ -33,8 +33,18 @@ func main() {
 		ImportThreshold:  100.0, // 100W import max (plus stable)
 	}
 
-	// Créer le régulateur
-	regulator := regulation.NewPIDRegulator(config, logger)
+	// Créer le nouveau régulateur Delta
+	deltaConfig := regulation.DeltaPIDConfig{
+		Kp:               config.Kp,
+		Ki:               config.Ki,
+		Kd:               config.Kd,
+		SmoothingFactor:  config.SmoothingFactor,
+		MaxTimeGap:       config.MaxTimeGap,
+		SurplusThreshold: config.SurplusThreshold,
+		ImportThreshold:  config.ImportThreshold,
+		MaxDeltaPerStep:  5.0, // Max 5A de variation par étape
+	}
+	regulator := regulation.NewDeltaRegulator(deltaConfig, logger)
 
 	fmt.Println("📋 Configuration PID:")
 	fmt.Printf("   Kp=%.4f, Ki=%.6f, Kd=%.6f\n", config.Kp, config.Ki, config.Kd)
@@ -50,6 +60,7 @@ func main() {
 	mode := "HP" // HP par défaut
 	maxCurrent := 40.0
 	maxHousePower := 12000.0
+	currentCharging := 0.0 // Simulation du courant actuellement en charge
 
 	fmt.Println("🎮 Commandes disponibles:")
 	fmt.Println("   <nombre>     - Entrer une puissance grid (W) (ex: -1500, 200)")
@@ -65,9 +76,7 @@ func main() {
 
 	for {
 		// Affichage du prompt avec état actuel
-		status := regulator.GetStatus()
-		currentTarget := status["current_target"].(float64)
-		fmt.Printf("\n[Step %d | Mode: %s | Current: %.1fA] > ", stepCount, mode, currentTarget)
+		fmt.Printf("\n[Step %d | Mode: %s | Charging: %.1fA] > ", stepCount, mode, currentCharging)
 
 		if !scanner.Scan() {
 			break
@@ -105,7 +114,7 @@ func main() {
 			updateConfig(&config, regulator, logger)
 
 		case input == "scenario":
-			runScenario(regulator, &stepCount, baseTime, mode, maxCurrent, maxHousePower)
+			runScenario(regulator, &stepCount, baseTime, mode, maxCurrent, maxHousePower, &currentCharging)
 
 		default:
 			// Essayer de parser comme une puissance
@@ -115,19 +124,39 @@ func main() {
 
 				// Préparer l'input pour le régulateur
 				regulationInput := regulation.RegulationInput{
-					GridPower:     power,
-					IsOffPeak:     (mode == "HC"),
-					MaxCurrent:    maxCurrent,
-					MaxHousePower: maxHousePower,
-					TargetPower:   0.0, // Consigne = 0W
-					Timestamp:     timestamp,
+					GridPower:       power,
+					CurrentCharging: currentCharging,
+					IsOffPeak:       (mode == "HC"),
+					MaxCurrent:      maxCurrent,
+					MaxHousePower:   maxHousePower,
+					TargetPower:     0.0, // Consigne = 0W
+					Timestamp:       timestamp,
 				}
 
 				// Calculer la régulation
 				output := regulator.Calculate(regulationInput)
 
+				// Simuler l'application du delta
+				if output.DeltaCurrent != 0 {
+					newCharging := currentCharging + output.DeltaCurrent
+					// Appliquer les contraintes de courant minimum
+					if newCharging < 6.0 && newCharging > 0 {
+						newCharging = 0 // Trop faible pour charger
+					}
+					if newCharging < 0 {
+						newCharging = 0
+					}
+					if newCharging > maxCurrent {
+						newCharging = maxCurrent
+					}
+					currentCharging = newCharging
+				} else if mode == "HC" {
+					// Mode HC: utiliser directement TargetCurrent
+					currentCharging = output.TargetCurrent
+				}
+
 				// Afficher le résultat
-				showOutput(power, output, stepCount)
+				showOutput(power, output, stepCount, currentCharging)
 			} else {
 				fmt.Println("❌ Commande inconnue. Tapez 'help' pour voir les commandes.")
 			}
@@ -135,7 +164,7 @@ func main() {
 	}
 }
 
-func showOutput(gridPower float64, output regulation.RegulationOutput, step int) {
+func showOutput(gridPower float64, output regulation.RegulationOutput, step int, actualCharging float64) {
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Printf("📊 Step %d - Résultat de la régulation\n", step)
 	fmt.Printf("   🔌 Grid Power:     %+8.1f W", gridPower)
@@ -148,10 +177,28 @@ func showOutput(gridPower float64, output regulation.RegulationOutput, step int)
 	}
 
 	fmt.Printf("   ⚡ Courant cible:  %8.2f A", output.TargetCurrent)
-	if output.IsCharging {
+	if output.ShouldCharge {
 		fmt.Printf(" ✅ CHARGE\n")
 	} else {
 		fmt.Printf(" ❌ Arrêt\n")
+	}
+
+	// Afficher le delta si disponible (nouveau régulateur)
+	if output.DeltaCurrent != 0 {
+		fmt.Printf("   📊 Delta courant:  %+8.2f A", output.DeltaCurrent)
+		if output.DeltaCurrent > 0 {
+			fmt.Printf(" ⬆️ Augmentation\n")
+		} else {
+			fmt.Printf(" ⬇️ Réduction\n")
+		}
+	}
+
+	// Afficher le courant réellement appliqué
+	fmt.Printf("   ⚡ Courant réel:   %8.2f A", actualCharging)
+	if actualCharging > 0 {
+		fmt.Printf(" ✅ EN CHARGE\n")
+	} else {
+		fmt.Printf(" ❌ Arrêté\n")
 	}
 
 	fmt.Printf("   📝 Raison:         %s\n", output.Reason)
@@ -210,7 +257,7 @@ func showHelp() {
 	fmt.Println("   5. Vois comme le PID s'adapte!")
 }
 
-func updateConfig(config *regulation.PIDConfig, regulator *regulation.PIDRegulator, logger *logrus.Logger) {
+func updateConfig(config *regulation.PIDConfig, regulator *regulation.DeltaRegulator, logger *logrus.Logger) {
 	fmt.Println("⚙️ Configuration actuelle:")
 	fmt.Printf("   Kp: %.6f\n", config.Kp)
 	fmt.Printf("   Ki: %.6f\n", config.Ki)
@@ -242,11 +289,21 @@ func updateConfig(config *regulation.PIDConfig, regulator *regulation.PIDRegulat
 	}
 
 	// Recreer le régulateur avec la nouvelle config
-	*regulator = *regulation.NewPIDRegulator(*config, logger)
-	fmt.Println("✅ Configuration mise à jour et PID reset")
+	deltaConfig := regulation.DeltaPIDConfig{
+		Kp:               config.Kp,
+		Ki:               config.Ki,
+		Kd:               config.Kd,
+		SmoothingFactor:  config.SmoothingFactor,
+		MaxTimeGap:       config.MaxTimeGap,
+		SurplusThreshold: config.SurplusThreshold,
+		ImportThreshold:  config.ImportThreshold,
+		MaxDeltaPerStep:  5.0,
+	}
+	*regulator = *regulation.NewDeltaRegulator(deltaConfig, logger)
+	fmt.Println("✅ Configuration mise à jour et Delta PID reset")
 }
 
-func runScenario(regulator regulation.RegulationService, stepCount *int, baseTime time.Time, mode string, maxCurrent, maxHousePower float64) {
+func runScenario(regulator regulation.RegulationService, stepCount *int, baseTime time.Time, mode string, maxCurrent, maxHousePower float64, currentCharging *float64) {
 	fmt.Println("🎬 Lancement du scénario: ton exemple (1200W → -2000W → 200W → -100W)")
 	fmt.Println()
 
@@ -266,18 +323,34 @@ func runScenario(regulator regulation.RegulationService, stepCount *int, baseTim
 		timestamp := baseTime.Add(time.Duration(*stepCount*scenario.delay) * time.Second)
 
 		input := regulation.RegulationInput{
-			GridPower:     scenario.power,
-			IsOffPeak:     (mode == "HC"),
-			MaxCurrent:    maxCurrent,
-			MaxHousePower: maxHousePower,
-			TargetPower:   0.0,
-			Timestamp:     timestamp,
+			GridPower:       scenario.power,
+			CurrentCharging: *currentCharging,
+			IsOffPeak:       (mode == "HC"),
+			MaxCurrent:      maxCurrent,
+			MaxHousePower:   maxHousePower,
+			TargetPower:     0.0,
+			Timestamp:       timestamp,
 		}
 
 		output := regulator.Calculate(input)
 
+		// Simuler l'application du delta
+		if output.DeltaCurrent != 0 {
+			newCharging := *currentCharging + output.DeltaCurrent
+			if newCharging < 6.0 && newCharging > 0 {
+				newCharging = 0
+			}
+			if newCharging < 0 {
+				newCharging = 0
+			}
+			if newCharging > maxCurrent {
+				newCharging = maxCurrent
+			}
+			*currentCharging = newCharging
+		}
+
 		fmt.Printf("🎬 Scénario %d: %s\n", i+1, scenario.name)
-		showOutput(scenario.power, output, *stepCount)
+		showOutput(scenario.power, output, *stepCount, *currentCharging)
 		fmt.Println()
 	}
 

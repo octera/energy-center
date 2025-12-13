@@ -30,8 +30,8 @@ type Manager struct {
 }
 
 func NewManager(cfg *config.Config, logger *logrus.Logger) *Manager {
-	// Créer le régulateur PID par défaut
-	regulator, err := regulation.CreateRegulator(regulation.PIDRegulation, cfg, logger)
+	// Créer le nouveau régulateur Delta PID par défaut
+	regulator, err := regulation.CreateRegulator(regulation.DeltaPIDRegulation, cfg, logger)
 	if err != nil {
 		logger.Fatalf("Failed to create regulator: %v", err)
 	}
@@ -141,36 +141,150 @@ func (m *Manager) updateChargingLimitsInternal() {
 		return
 	}
 
+	// Calculer le courant actuellement en charge
+	currentCharging := m.getCurrentTotalCharging()
+
 	// Préparer les données d'entrée pour le régulateur
 	input := regulation.RegulationInput{
-		GridPower:     gridPower,
-		IsOffPeak:     isOffPeak,
-		MaxCurrent:    m.config.Charging.MaxTotalCurrent,
-		MaxHousePower: m.config.Charging.MaxHousePower,
-		TargetPower:   m.config.Charging.GridTargetPower,
-		Timestamp:     gridTimestamp,
+		GridPower:       gridPower,
+		CurrentCharging: currentCharging,
+		IsOffPeak:       isOffPeak,
+		MaxCurrent:      m.config.Charging.MaxTotalCurrent,
+		MaxHousePower:   m.config.Charging.MaxHousePower,
+		TargetPower:     m.config.Charging.GridTargetPower,
+		Timestamp:       gridTimestamp,
 	}
 
-	// Calculer le courant cible via le régulateur
+	// Calculer le delta via le régulateur
 	output := m.regulator.Calculate(input)
 
-	m.logger.Debugf("Regulation: %s - Target: %.1fA, Reason: %s",
-		m.regulator.GetName(), output.TargetCurrent, output.Reason)
+	m.logger.Debugf("Regulation: %s - Current: %.1fA, Delta: %+.2fA, Reason: %s",
+		m.regulator.GetName(), currentCharging, output.DeltaCurrent, output.Reason)
 
-	// Distribuer le courant aux stations
+	// Récupérer les stations connectées
 	connectedStations := m.getConnectedStations()
 	if len(connectedStations) == 0 {
 		m.logger.Debug("No connected stations")
 		return
 	}
 
-	if output.TargetCurrent <= 0 {
-		m.logger.Debug("No available current from regulator, stopping all charging")
-		m.stopAllCharging()
+	// Gérer selon le type de régulateur
+	if output.DeltaCurrent != 0 {
+		// Nouveau régulateur Delta : appliquer le delta
+		if !output.ShouldCharge && currentCharging > 0 {
+			m.logger.Debug("Regulation indicates charging should stop")
+			m.stopAllCharging()
+			return
+		}
+		m.applyCurrentDelta(connectedStations, output.DeltaCurrent)
+	} else {
+		// Ancien régulateur : utiliser TargetCurrent (compatibilité)
+		if output.TargetCurrent <= 0 {
+			m.logger.Debug("No available current from regulator, stopping all charging")
+			m.stopAllCharging()
+			return
+		}
+		m.distributeCurrentByPriority(connectedStations, output.TargetCurrent)
+	}
+}
+
+// getCurrentTotalCharging calcule le courant total actuellement en charge
+func (m *Manager) getCurrentTotalCharging() float64 {
+	total := 0.0
+	for _, station := range m.stations {
+		if station.IsConnected && station.IsCharging {
+			total += station.GetCurrentLimit()
+		}
+	}
+	return total
+}
+
+// applyCurrentDelta applique un delta de courant aux stations connectées
+func (m *Manager) applyCurrentDelta(stations []*models.ChargingStation, deltaCurrent float64) {
+	if math.Abs(deltaCurrent) < 0.1 {
+		m.logger.Debug("Delta too small, no adjustment needed")
 		return
 	}
 
-	m.distributeCurrentByPriority(connectedStations, output.TargetCurrent)
+	m.logger.Debugf("Applying delta %.2fA to %d stations", deltaCurrent, len(stations))
+
+	if deltaCurrent > 0 {
+		// Augmentation: distribuer selon priorité et disponibilité
+		m.distributePositiveDelta(stations, deltaCurrent)
+	} else {
+		// Réduction: réduire proportionnellement
+		m.distributeNegativeDelta(stations, -deltaCurrent)
+	}
+}
+
+// distributePositiveDelta distribue un surplus de courant
+func (m *Manager) distributePositiveDelta(stations []*models.ChargingStation, deltaCurrent float64) {
+	remaining := deltaCurrent
+
+	for _, station := range stations {
+		if remaining <= 0 {
+			break
+		}
+
+		currentLimit := station.GetCurrentLimit()
+		maxIncrease := station.MaxCurrent - currentLimit
+
+		// Si station pas encore en charge, besoin d'au moins 6A
+		if currentLimit == 0 {
+			if remaining >= 6.0 && maxIncrease >= 6.0 {
+				allocation := math.Min(remaining, maxIncrease)
+				m.setStationCurrent(station.ID, allocation)
+				remaining -= allocation
+				m.logger.Infof("Started charging station %s with %.1fA", station.ID, allocation)
+			}
+		} else if maxIncrease > 0 {
+			// Station déjà en charge, peut augmenter graduellement
+			allocation := math.Min(remaining, maxIncrease)
+			m.setStationCurrent(station.ID, currentLimit+allocation)
+			remaining -= allocation
+			m.logger.Infof("Increased station %s to %.1fA (+%.1fA)", station.ID, currentLimit+allocation, allocation)
+		}
+	}
+
+	if remaining > 0 {
+		m.logger.Debugf("Could not allocate %.1fA (stations at max)", remaining)
+	}
+}
+
+// distributeNegativeDelta réduit le courant proportionnellement
+func (m *Manager) distributeNegativeDelta(stations []*models.ChargingStation, reductionCurrent float64) {
+	totalCharging := 0.0
+	for _, station := range stations {
+		if station.GetCurrentLimit() > 0 {
+			totalCharging += station.GetCurrentLimit()
+		}
+	}
+
+	if totalCharging == 0 {
+		return
+	}
+
+	for _, station := range stations {
+		currentLimit := station.GetCurrentLimit()
+		if currentLimit > 0 {
+			// Réduction proportionnelle
+			reduction := reductionCurrent * (currentLimit / totalCharging)
+			newLimit := math.Max(0, currentLimit-reduction)
+
+			// Si tombe sous 6A, arrêter complètement
+			if newLimit < 6.0 && newLimit > 0 {
+				newLimit = 0
+			}
+
+			m.setStationCurrent(station.ID, newLimit)
+
+			if newLimit == 0 {
+				m.logger.Infof("Stopped charging station %s", station.ID)
+			} else {
+				m.logger.Infof("Reduced station %s to %.1fA (-%.1fA)", station.ID, newLimit, reduction)
+			}
+		}
+	}
 }
 
 func (m *Manager) getConnectedStations() []*models.ChargingStation {

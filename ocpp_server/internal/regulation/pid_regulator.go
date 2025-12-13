@@ -69,8 +69,9 @@ func (p *PIDRegulator) calculateOffPeak(input RegulationInput) RegulationOutput 
 	}
 
 	return RegulationOutput{
+		DeltaCurrent:  0, // Mode HC gère directement le courant cible
 		TargetCurrent: availableCurrent,
-		IsCharging:    availableCurrent > 6.0, // Courant minimum
+		ShouldCharge:  availableCurrent > 6.0, // Courant minimum
 		Reason:        "Off-peak mode - maximum charging",
 		DebugInfo: map[string]interface{}{
 			"available_power":   availablePower,
@@ -112,8 +113,9 @@ func (p *PIDRegulator) calculateOnPeak(input RegulationInput) RegulationOutput {
 
 	// Création du résultat
 	result := RegulationOutput{
+		DeltaCurrent:  0, // PID classique calcule directement le courant cible
 		TargetCurrent: safeOutput,
-		IsCharging:    safeOutput > 6.0,
+		ShouldCharge:  safeOutput > 6.0,
 		DebugInfo: map[string]interface{}{
 			"grid_power":     input.GridPower,
 			"smoothed_power": p.smoothedPower,

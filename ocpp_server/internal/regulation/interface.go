@@ -6,18 +6,20 @@ import (
 
 // RegulationInput contient les données d'entrée pour l'algorithme
 type RegulationInput struct {
-	GridPower     float64   // Puissance réseau actuelle (W)
-	IsOffPeak     bool      // Mode HP/HC
-	MaxCurrent    float64   // Courant maximum autorisé (A)
-	MaxHousePower float64   // Puissance max maison (W)
-	TargetPower   float64   // Consigne de puissance (généralement 0W)
-	Timestamp     time.Time // Timestamp de la mesure
+	GridPower       float64   // Puissance réseau actuelle (W)
+	CurrentCharging float64   // Courant actuellement en charge (A)
+	IsOffPeak       bool      // Mode HP/HC
+	MaxCurrent      float64   // Courant maximum autorisé (A)
+	MaxHousePower   float64   // Puissance max maison (W)
+	TargetPower     float64   // Consigne de puissance (généralement 0W)
+	Timestamp       time.Time // Timestamp de la mesure
 }
 
 // RegulationOutput contient le résultat de l'algorithme
 type RegulationOutput struct {
-	TargetCurrent float64                // Courant cible calculé (A)
-	IsCharging    bool                   // Autorisation de charge
+	DeltaCurrent  float64                // Écart de courant à appliquer (A) - positif = augmenter, négatif = réduire
+	TargetCurrent float64                // [DEPRECATED] Courant cible calculé (A) - pour compatibilité
+	ShouldCharge  bool                   // Autorisation globale de charge
 	Reason        string                 // Raison de la décision
 	DebugInfo     map[string]interface{} // Infos de debug
 }
