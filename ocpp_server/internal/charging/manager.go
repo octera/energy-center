@@ -64,26 +64,61 @@ func (m *Manager) SetCurrentLimitUpdateCallback(callback func(string, float64)) 
 }
 
 func (m *Manager) Start(ctx context.Context) {
-	ticker := time.NewTicker(time.Duration(m.config.Charging.UpdateInterval) * time.Second)
-	defer ticker.Stop()
+	// Watchdog timer pour arrêter la charge si pas de message MQTT
+	watchdogTicker := time.NewTicker(1 * time.Minute)
+	defer watchdogTicker.Stop()
 
-	m.logger.Info("Starting charging manager")
+	m.logger.Info("Starting charging manager with MQTT-driven updates")
 
 	for {
 		select {
 		case <-ctx.Done():
 			m.logger.Info("Stopping charging manager")
 			return
-		case <-ticker.C:
-			m.updateChargingLimits()
+		case <-watchdogTicker.C:
+			m.checkDataFreshness()
 		}
 	}
 }
 
-func (m *Manager) updateChargingLimits() {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+// Cette fonction sera appelée quand un message MQTT arrive
+func (m *Manager) OnGridPowerUpdate() {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
+	m.logger.Debug("Grid power updated via MQTT, triggering PID calculation")
+	m.updateChargingLimitsInternal()
+}
+
+func (m *Manager) checkDataFreshness() {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	if m.gridData == nil || m.hphcState == nil {
+		return
+	}
+
+	_, gridTimestamp := m.gridData.Get()
+	_, hphcTimestamp := m.hphcState.Get()
+
+	// Watchdog: Si pas de données depuis 5 minutes, arrêter la charge
+	if time.Since(gridTimestamp) > 5*time.Minute {
+		m.logger.Warn("No grid data received for 5 minutes, stopping charging for safety")
+		m.stopAllCharging()
+		m.resetPID()
+		return
+	}
+
+	if time.Since(hphcTimestamp) > 5*time.Minute {
+		m.logger.Warn("No HP/HC data received for 5 minutes, stopping charging for safety")
+		m.stopAllCharging()
+		m.resetPID()
+		return
+	}
+}
+
+// Version interne appelée avec le mutex déjà acquis
+func (m *Manager) updateChargingLimitsInternal() {
 	if m.gridData == nil || m.hphcState == nil {
 		return
 	}
@@ -91,9 +126,11 @@ func (m *Manager) updateChargingLimits() {
 	gridPower, gridTimestamp := m.gridData.Get()
 	isOffPeak, hphcTimestamp := m.hphcState.Get()
 
+	// Vérification rapide de fraîcheur (détaillée dans le watchdog)
 	if time.Since(gridTimestamp) > 5*time.Minute || time.Since(hphcTimestamp) > 5*time.Minute {
 		m.logger.Warn("Grid data or HP/HC data is too old, stopping charging")
 		m.stopAllCharging()
+		m.resetPID()
 		return
 	}
 
@@ -101,7 +138,7 @@ func (m *Manager) updateChargingLimits() {
 
 	/*connectedStations := m.getConnectedStations()
 	if len(connectedStations) == 0 {
-		m.logger.Debug("No connected stations, stopping all charging")
+		m.logger.Debug("No connected stations")
 		return
 	}*/
 
@@ -156,14 +193,22 @@ func (m *Manager) calculatePIDCurrent(maxCurrent float64) float64 {
 	// PID Error calculation
 	error := targetPower - currentPower // Negative error = surplus (good), positive = import (bad)
 
-	// Time delta
+	// Time delta depuis la dernière mesure MQTT (pas depuis la dernière boucle!)
 	now := time.Now()
 	dt := now.Sub(m.lastUpdate).Seconds()
+
+	// Si trop de temps s'est écoulé, on reset le PID pour éviter la divergence
+	if dt > 60 { // Plus d'1 minute sans mesure
+		m.logger.Warn("Large time gap since last measurement, resetting PID")
+		m.resetPID()
+		dt = 1.0
+	}
+
 	if dt <= 0 {
 		dt = 1.0
 	}
 
-	// Integral term (accumulated error)
+	// Integral term (accumulated error) - seulement si pas trop de temps écoulé
 	m.integralError += error * dt
 
 	// Derivative term (rate of change of error)
@@ -203,8 +248,8 @@ func (m *Manager) calculatePIDCurrent(maxCurrent float64) float64 {
 
 	m.previousError = error
 
-	m.logger.Debugf("PID: Power=%.1fW, Error=%.1fW, Target=%.1fA, Adjustment=%.2fA",
-		currentPower, error, m.currentTarget, currentAdjustment)
+	m.logger.Debugf("PID: Power=%.1fW, Error=%.1fW, Target=%.1fA, Adjustment=%.2fA, dt=%.1fs",
+		currentPower, error, m.currentTarget, currentAdjustment, dt)
 
 	return m.currentTarget
 }
@@ -330,4 +375,11 @@ func (m *Manager) GetStatus() map[string]interface{} {
 	status["max_total_current"] = m.config.Charging.MaxTotalCurrent
 
 	return status
+}
+
+func (m *Manager) resetPID() {
+	m.previousError = 0
+	m.integralError = 0
+	m.currentTarget = 0
+	m.logger.Info("PID controller reset")
 }

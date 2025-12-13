@@ -74,15 +74,21 @@ charging:
 
 ## 📊 Algorithme de Régulation
 
-### Mode HP (Heures Pleines)
+### Mode HP (Heures Pleines) - **MQTT-Driven**
 ```
 Objectif: grid_power ≈ 0W (autoconsommation)
 
+🔄 DÉCLENCHEMENT: À chaque message MQTT grid_power
 1. Mesure: grid_power via MQTT
 2. Erreur: error = 0 - grid_power  
 3. PID: ajustement = Kp*error + Ki*∫error + Kd*d(error)/dt
 4. Update: current_target += ajustement/230V
 5. Distribution: priorité station1 > station2
+
+🛡️ SÉCURITÉS:
+- Watchdog: Arrêt si pas de message > 5min
+- Reset PID: Si gap > 1min entre messages
+- Anti-windup: Reset intégrale si saturation
 ```
 
 ### Mode HC (Heures Creuses)

@@ -23,6 +23,7 @@ type Client struct {
 
 	onGridPowerUpdate func(power float64)
 	onHPHCUpdate      func(isOffPeak bool)
+	onMQTTUpdate      func() // Callback pour notifier qu'une donnée MQTT a été mise à jour
 }
 
 type GridPowerMessage struct {
@@ -77,9 +78,10 @@ func (c *Client) Disconnect() {
 	c.client.Disconnect(250)
 }
 
-func (c *Client) SetCallbacks(onGridPower func(float64), onHPHC func(bool)) {
+func (c *Client) SetCallbacks(onGridPower func(float64), onHPHC func(bool), onMQTTUpdate func()) {
 	c.onGridPowerUpdate = onGridPower
 	c.onHPHCUpdate = onHPHC
+	c.onMQTTUpdate = onMQTTUpdate
 }
 
 func (c *Client) GetGridData() *models.GridData {
@@ -139,6 +141,11 @@ func (c *Client) handleGridPowerMessage(client mqtt.Client, msg mqtt.Message) {
 
 	if c.onGridPowerUpdate != nil {
 		c.onGridPowerUpdate(power)
+	}
+
+	// Notifier que des données MQTT ont été mises à jour
+	if c.onMQTTUpdate != nil {
+		c.onMQTTUpdate()
 	}
 }
 

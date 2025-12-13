@@ -64,6 +64,10 @@ func main() {
 			}
 			logger.Infof("MQTT: HP/HC state updated to %s", state)
 		},
+		func() {
+			// Déclencher le calcul PID à chaque réception de message MQTT
+			chargingManager.OnGridPowerUpdate()
+		},
 	)
 
 	var wg sync.WaitGroup
