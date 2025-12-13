@@ -37,20 +37,23 @@ func listenMqttGrid(client mqtt.Client) {
 	client.Subscribe("powerinfo/grid", 0, func(client mqtt.Client, msg mqtt.Message) {
 		var p, _ = strconv.Atoi(string(msg.Payload()))
 		gridPower = int32(p)
+		fmt.Printf("Receive gridpower : %d, original payload : %s \n", gridPower, msg.Payload())
 		watchdogMqtt.Reset(WatchdogTimeout)
 	})
 }
 func listenMqttGridIndex(client mqtt.Client) {
-	client.Subscribe("powerinfo/totalIndex", 0, func(client mqtt.Client, msg mqtt.Message) {
+	client.Subscribe("powerinfo/totalindex", 0, func(client mqtt.Client, msg mqtt.Message) {
 		var p, _ = strconv.Atoi(string(msg.Payload()))
 		gridIndex = int32(p)
+		fmt.Printf("Receive total consumtion index : %d, original payload : %s \n", gridIndex, msg.Payload())
 		watchdogMqtt.Reset(WatchdogTimeout)
 	})
 }
 func listenMqttInjectIndex(client mqtt.Client) {
-	client.Subscribe("powerinfo/totalInjIndex", 0, func(client mqtt.Client, msg mqtt.Message) {
+	client.Subscribe("powerinfo/totalinjectedindex", 0, func(client mqtt.Client, msg mqtt.Message) {
 		var p, _ = strconv.Atoi(string(msg.Payload()))
 		injecIndex = int32(p)
+		fmt.Printf("Receive total injected index : %d, original payload : %s \n", injecIndex, msg.Payload())
 		watchdogMqtt.Reset(WatchdogTimeout)
 	})
 }
@@ -59,7 +62,7 @@ func main() {
 	var url string
 	var serialDevice string
 
-	flag.StringVar(&url, "url", "192.168.0.20:1883", "mqtt server")
+	flag.StringVar(&url, "url", "192.168.0.21:1883", "mqtt server")
 	flag.StringVar(&serialDevice, "port", "/dev/serial/by-id/usb-1a86_USB2.0-Ser_-if00-port0", "serial port")
 
 	flag.Parse()
@@ -96,6 +99,7 @@ func modbusMessageHandler(server *mbserver.Server, frame mbserver.Framer) ([]byt
 	case 63:
 		fmt.Printf("Requesting %d with %d register count\n", register, numRegs)
 	case 10: // 12 registers
+		fmt.Printf("Requesting %d with %d register count\n", register, numRegs)
 		var byteBuffer = make([]byte, 4)
 		var indexDiv = gridIndex / 10
 		binary.BigEndian.PutUint32(byteBuffer, uint32(indexDiv)) // Current forward active total electric energy : scale is 1 increment per 10wh
@@ -179,7 +183,11 @@ func CreateModbusServer(device string) *mbserver.Server {
 
 func CreateMqttClient(url string) mqtt.Client {
 	mqtt.ERROR = log.New(os.Stdout, "", 0)
-	opts := mqtt.NewClientOptions().AddBroker(url).SetClientID(ProgNameMqtt)
+	opts := mqtt.NewClientOptions().
+		AddBroker(url).
+		SetClientID(ProgNameMqtt).
+		SetUsername("opas").
+		SetPassword("opas")
 	opts.SetKeepAlive(60 * time.Second)
 	opts.SetPingTimeout(1 * time.Second)
 
