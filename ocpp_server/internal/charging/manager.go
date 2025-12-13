@@ -24,6 +24,12 @@ type Manager struct {
 	smoothedPower float64
 	lastUpdate    time.Time
 
+	// PID Controller variables for grid regulation
+	targetGridPower float64
+	previousError   float64
+	integralError   float64
+	currentTarget   float64
+
 	mutex sync.RWMutex
 
 	onCurrentLimitUpdate func(stationID string, limit float64)
@@ -93,10 +99,11 @@ func (m *Manager) updateChargingLimits() {
 
 	m.updateSmoothedPower(gridPower)
 
-	connectedStations := m.getConnectedStations()
+	/*connectedStations := m.getConnectedStations()
 	if len(connectedStations) == 0 {
+		m.logger.Debug("No connected stations, stopping all charging")
 		return
-	}
+	}*/
 
 	availableCurrent := m.calculateAvailableCurrent(isOffPeak)
 
@@ -106,7 +113,7 @@ func (m *Manager) updateChargingLimits() {
 		return
 	}
 
-	m.distributeCurrentByPriority(connectedStations, availableCurrent)
+	//m.distributeCurrentByPriority(connectedStations, availableCurrent)
 }
 
 func (m *Manager) updateSmoothedPower(currentPower float64) {
@@ -138,20 +145,68 @@ func (m *Manager) calculateAvailableCurrent(isOffPeak bool) float64 {
 		return availableCurrent
 	}
 
-	if m.smoothedPower >= 0 {
-		m.logger.Debug("On-peak mode: no surplus solar, no charging allowed")
-		return 0
+	// On-peak mode: Use PID controller to regulate grid power to target (typically 0W)
+	return m.calculatePIDCurrent(maxCurrent)
+}
+
+func (m *Manager) calculatePIDCurrent(maxCurrent float64) float64 {
+	targetPower := m.config.Charging.GridTargetPower
+	currentPower := m.smoothedPower
+
+	// PID Error calculation
+	error := targetPower - currentPower // Negative error = surplus (good), positive = import (bad)
+
+	// Time delta
+	now := time.Now()
+	dt := now.Sub(m.lastUpdate).Seconds()
+	if dt <= 0 {
+		dt = 1.0
 	}
 
-	surplusPower := -m.smoothedPower
-	availableCurrent := surplusPower / 230.0
+	// Integral term (accumulated error)
+	m.integralError += error * dt
 
-	if availableCurrent > maxCurrent {
-		availableCurrent = maxCurrent
+	// Derivative term (rate of change of error)
+	derivative := (error - m.previousError) / dt
+
+	// PID output (desired power adjustment)
+	kp := m.config.Charging.PIDKp
+	ki := m.config.Charging.PIDKi
+	kd := m.config.Charging.PIDKd
+
+	powerAdjustment := kp*error + ki*m.integralError + kd*derivative
+
+	// Convert power adjustment to current adjustment
+	currentAdjustment := powerAdjustment / 230.0
+
+	// Update target current
+	m.currentTarget += currentAdjustment
+
+	// Clamp to limits
+	if m.currentTarget < 0 {
+		m.currentTarget = 0
+		m.integralError = 0 // Anti-windup
+	}
+	if m.currentTarget > maxCurrent {
+		m.currentTarget = maxCurrent
+		m.integralError = 0 // Anti-windup
 	}
 
-	m.logger.Debugf("On-peak mode with solar surplus: %.1fW surplus = %.1fA available", surplusPower, availableCurrent)
-	return availableCurrent
+	// Safety: In HP mode, only charge if we detect surplus over time
+	if error < -100 { // More than 100W surplus
+		// We have surplus, charging is allowed
+	} else if error > 50 { // Importing more than 50W
+		// Importing from grid, reduce charging aggressively
+		m.currentTarget = math.Max(0, m.currentTarget-1.0)
+		m.integralError = 0
+	}
+
+	m.previousError = error
+
+	m.logger.Debugf("PID: Power=%.1fW, Error=%.1fW, Target=%.1fA, Adjustment=%.2fA",
+		currentPower, error, m.currentTarget, currentAdjustment)
+
+	return m.currentTarget
 }
 
 func (m *Manager) getConnectedStations() []*models.ChargingStation {

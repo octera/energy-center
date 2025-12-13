@@ -17,3 +17,9 @@ charging:
   update_interval: 5               # Update interval in seconds
   station1_priority: 1             # Priority for station1 (lower = higher priority)
   station2_priority: 2             # Priority for station2
+  
+  # PID Controller for grid regulation (HP mode only)
+  pid_kp: 0.001                    # Proportional gain (A/W)
+  pid_ki: 0.0001                   # Integral gain (A/W/s)
+  pid_kd: 0.00001                  # Derivative gain (A*s/W)
+  grid_target_power: 0.0           # Target grid power (W) - typically 0 for solar self-consumption

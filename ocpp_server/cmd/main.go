@@ -17,7 +17,7 @@ import (
 
 func main() {
 	logger := logrus.New()
-	logger.SetLevel(logrus.InfoLevel)
+	logger.SetLevel(logrus.DebugLevel)
 
 	cfg, err := config.Load()
 	if err != nil {

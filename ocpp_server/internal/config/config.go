@@ -37,6 +37,12 @@ type ChargingConfig struct {
 	UpdateInterval   int     `mapstructure:"update_interval"`
 	Station1Priority int     `mapstructure:"station1_priority"`
 	Station2Priority int     `mapstructure:"station2_priority"`
+
+	// PID Controller parameters
+	PIDKp           float64 `mapstructure:"pid_kp"`
+	PIDKi           float64 `mapstructure:"pid_ki"`
+	PIDKd           float64 `mapstructure:"pid_kd"`
+	GridTargetPower float64 `mapstructure:"grid_target_power"`
 }
 
 func Load() (*Config, error) {
@@ -53,6 +59,10 @@ func Load() (*Config, error) {
 	viper.SetDefault("charging.update_interval", 5)
 	viper.SetDefault("charging.station1_priority", 1)
 	viper.SetDefault("charging.station2_priority", 2)
+	viper.SetDefault("charging.pid_kp", 0.001)
+	viper.SetDefault("charging.pid_ki", 0.0001)
+	viper.SetDefault("charging.pid_kd", 0.00001)
+	viper.SetDefault("charging.grid_target_power", 0.0)
 
 	viper.AutomaticEnv()
 
