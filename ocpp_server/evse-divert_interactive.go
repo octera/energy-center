@@ -359,7 +359,7 @@ func ovse_divert_updateConfig(config *regulation.PIDConfig, regulator *regulatio
 	// Pour l'instant, on ne permet que de modifier quelques paramètres clés
 	newConfig := regulation.OpenEVSEConfig{
 		ReservePowerW:    100.0,
-		HysteresisPowerW: 600.0,
+		HysteresisPowerW: 200.0,
 		MinChargeTimeS:   60.0,
 		SmoothingAttackS: 15.0,
 		SmoothingDecayS:  45.0,

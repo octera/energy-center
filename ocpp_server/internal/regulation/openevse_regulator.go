@@ -104,7 +104,7 @@ func (o *OpenEVSERegulator) calculateOpenEVSELogic(input RegulationInput) Regula
 
 	// Calcul de la puissance excédentaire (algorithme OpenEVSE)
 	chargingPower := input.CurrentCharging * 230.0
-	excessPower := -(input.GridPower + chargingPower) // Négatif = import, positif = surplus
+	excessPower := -input.GridPower + chargingPower // Surplus grid + puissance déjà en charge
 
 	// Lissage temporel de la puissance excédentaire (comme OpenEVSE)
 	o.updateSmoothedExcess(excessPower, dt)
