@@ -14,6 +14,7 @@ type RegulationType string
 const (
 	PIDRegulation      RegulationType = "pid"
 	DeltaPIDRegulation RegulationType = "delta_pid"
+	OpenEVSERegulation RegulationType = "openevse"
 	SimpleRegulation   RegulationType = "simple"
 )
 
@@ -44,6 +45,19 @@ func CreateRegulator(regulationType RegulationType, cfg *config.Config, logger *
 			MaxDeltaPerStep:  5.0,   // Max 5A de variation par étape
 		}
 		return NewDeltaRegulator(deltaPIDConfig, logger), nil
+
+	case OpenEVSERegulation:
+		openevseConfig := OpenEVSEConfig{
+			ReservePowerW:    100.0,  // 100W de réserve pour éviter l'import
+			HysteresisPowerW: 600.0,  // 600W d'hystérésis comme dans l'article
+			MinChargeTimeS:   300.0,  // 5 minutes minimum de charge
+			SmoothingAttackS: 30.0,   // 30s pour attaque (rapide)
+			SmoothingDecayS:  120.0,  // 2min pour décroissance (lent)
+			MinChargePowerW:  1400.0, // 1.4kW minimum pour démarrer (6A)
+			PollIntervalS:    10.0,   // 10s comme OpenEVSE
+			MaxDeltaPerStepA: 3.0,    // Max 3A de variation par étape
+		}
+		return NewOpenEVSERegulator(openevseConfig, logger), nil
 
 	case SimpleRegulation:
 		simpleConfig := SimpleConfig{

@@ -33,22 +33,23 @@ func main() {
 		ImportThreshold:  100.0, // 100W import max (plus stable)
 	}
 
-	// Créer le nouveau régulateur Delta
-	deltaConfig := regulation.DeltaPIDConfig{
-		Kp:               config.Kp,
-		Ki:               config.Ki,
-		Kd:               config.Kd,
-		SmoothingFactor:  config.SmoothingFactor,
-		MaxTimeGap:       config.MaxTimeGap,
-		SurplusThreshold: config.SurplusThreshold,
-		ImportThreshold:  config.ImportThreshold,
-		MaxDeltaPerStep:  5.0, // Max 5A de variation par étape
+	// Créer le régulateur OpenEVSE
+	openevseConfig := regulation.OpenEVSEConfig{
+		ReservePowerW:    100.0,  // 100W de réserve pour éviter l'import
+		HysteresisPowerW: 600.0,  // 600W d'hystérésis comme dans l'article
+		MinChargeTimeS:   60.0,   // 1 minute minimum (réduit pour test interactif)
+		SmoothingAttackS: 15.0,   // 15s pour attaque (réduit pour test)
+		SmoothingDecayS:  45.0,   // 45s pour décroissance (réduit pour test)
+		MinChargePowerW:  1400.0, // 1.4kW minimum pour démarrer (6A)
+		PollIntervalS:    5.0,    // 5s pour test interactif
+		MaxDeltaPerStepA: 3.0,    // Max 3A de variation par étape
 	}
-	regulator := regulation.NewDeltaRegulator(deltaConfig, logger)
+	regulator := regulation.NewOpenEVSERegulator(openevseConfig, logger)
 
-	fmt.Println("📋 Configuration PID:")
-	fmt.Printf("   Kp=%.4f, Ki=%.6f, Kd=%.6f\n", config.Kp, config.Ki, config.Kd)
-	fmt.Printf("   Seuil surplus: %.0fW, Seuil import: %.0fW\n", config.SurplusThreshold, config.ImportThreshold)
+	fmt.Println("📋 Configuration OpenEVSE:")
+	fmt.Printf("   Réserve: %.0fW, Hystérésis: %.0fW\n", openevseConfig.ReservePowerW, openevseConfig.HysteresisPowerW)
+	fmt.Printf("   Temps min charge: %.0fs, Puissance min: %.0fW\n", openevseConfig.MinChargeTimeS, openevseConfig.MinChargePowerW)
+	fmt.Printf("   Lissage attaque/décroissance: %.0fs/%.0fs\n", openevseConfig.SmoothingAttackS, openevseConfig.SmoothingDecayS)
 	fmt.Println()
 
 	// Variables pour la session
@@ -63,16 +64,16 @@ func main() {
 	currentCharging := 0.0 // Simulation du courant actuellement en charge
 
 	fmt.Println("🎮 Commandes disponibles:")
-	fmt.Println("   <grid_power>        - Entrer une puissance grid (W) (ex: -1500, 200)")
+	fmt.Println("   <grid_power>        - Entrer une puissance grid (W) (ex: -2500, 1000)")
 	fmt.Println("   <grid_power> <amps> - Grid + courant actuel (ex: 2000 3, -1500 0)")
-	fmt.Println("   hc                  - Passer en mode HC (heures creuses)")
-	fmt.Println("   hp                  - Passer en mode HP (heures pleines)")
-	fmt.Println("   reset               - Reset du PID")
-	fmt.Println("   status              - Afficher l'état du PID")
-	fmt.Println("   config              - Modifier la configuration")
-	fmt.Println("   scenario            - Lancer un scénario prédéfini")
-	fmt.Println("   help                - Afficher cette aide")
-	fmt.Println("   quit                - Quitter")
+	fmt.Println("   hc           - Passer en mode HC (heures creuses)")
+	fmt.Println("   hp           - Passer en mode HP (heures pleines)")
+	fmt.Println("   reset        - Reset du régulateur")
+	fmt.Println("   status       - Afficher l'état du régulateur")
+	fmt.Println("   config       - Modifier la configuration")
+	fmt.Println("   scenario     - Lancer un scénario OpenEVSE")
+	fmt.Println("   help         - Afficher cette aide")
+	fmt.Println("   quit         - Quitter")
 	fmt.Println()
 
 	for {
@@ -94,7 +95,7 @@ func main() {
 			return
 
 		case input == "help" || input == "h":
-			showHelp()
+			ovse_divert_showHelp()
 
 		case input == "reset":
 			regulator.Reset()
@@ -109,13 +110,13 @@ func main() {
 			fmt.Println("🌙 Mode HC (heures creuses) activé")
 
 		case input == "status":
-			showStatus(regulator)
+			ovse_divert_showStatus(regulator)
 
 		case input == "config":
-			updateConfig(&config, regulator, logger)
+			ovse_divert_updateConfig(&config, regulator, logger)
 
 		case input == "scenario":
-			runScenario(regulator, &stepCount, baseTime, mode, maxCurrent, maxHousePower, &currentCharging)
+			ovse_divert_runScenario(regulator, &stepCount, baseTime, mode, maxCurrent, maxHousePower, &currentCharging)
 
 		default:
 			// Essayer de parser comme "grid_power" ou "grid_power current_charging"
@@ -140,7 +141,7 @@ func main() {
 					// Calculer la régulation
 					output := regulator.Calculate(regulationInput)
 
-					// Simuler l'application du delta
+					// Simuler l'application du delta (comme le ChargingManager)
 					if output.DeltaCurrent != 0 {
 						newCharging := currentCharging + output.DeltaCurrent
 						// Appliquer les contraintes de courant minimum
@@ -155,12 +156,12 @@ func main() {
 						}
 						currentCharging = newCharging
 					} else if mode == "HC" {
-						// Mode HC: utiliser directement TargetCurrent
+						// Mode HC: utiliser directement TargetCurrent pour compatibilité
 						currentCharging = output.TargetCurrent
 					}
 
 					// Afficher le résultat
-					showOutput(power, output, stepCount, currentCharging)
+					ovse_divert_showOutput(power, output, stepCount, currentCharging)
 				} else {
 					fmt.Println("❌ Commande inconnue. Tapez 'help' pour voir les commandes.")
 				}
@@ -194,7 +195,7 @@ func main() {
 						// L'utilisateur contrôle le courant manuellement
 
 						// Afficher le résultat
-						showOutput(power, output, stepCount, currentCharging)
+						ovse_divert_showOutput(power, output, stepCount, currentCharging)
 					} else {
 						fmt.Println("❌ Courant invalide. Format: 'grid_power current_charging'")
 					}
@@ -208,7 +209,7 @@ func main() {
 	}
 }
 
-func showOutput(gridPower float64, output regulation.RegulationOutput, step int, actualCharging float64) {
+func ovse_divert_showOutput(gridPower float64, output regulation.RegulationOutput, step int, actualCharging float64) {
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Printf("📊 Step %d - Résultat de la régulation\n", step)
 	fmt.Printf("   🔌 Grid Power:     %+8.1f W", gridPower)
@@ -245,6 +246,19 @@ func showOutput(gridPower float64, output regulation.RegulationOutput, step int,
 		fmt.Printf(" ❌ Arrêté\n")
 	}
 
+	// Afficher les infos spécifiques OpenEVSE
+	if debugInfo, ok := output.DebugInfo["smoothed_excess"]; ok {
+		fmt.Printf("   🌞 Surplus lissé:  %8.0f W", debugInfo)
+		if val, exists := output.DebugInfo["is_charging"]; exists {
+			if isCharging, ok := val.(bool); ok && isCharging {
+				if timeInfo, ok2 := output.DebugInfo["time_since_start"]; ok2 {
+					fmt.Printf(" | Charge depuis: %.0fs", timeInfo)
+				}
+			}
+		}
+		fmt.Println()
+	}
+
 	fmt.Printf("   📝 Raison:         %s\n", output.Reason)
 
 	// Debug info détaillé
@@ -260,100 +274,128 @@ func showOutput(gridPower float64, output regulation.RegulationOutput, step int,
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 }
 
-func showStatus(regulator regulation.RegulationService) {
+func ovse_divert_showStatus(regulator regulation.RegulationService) {
 	status := regulator.GetStatus()
 
-	fmt.Println("📊 État du régulateur PID:")
-	fmt.Printf("   Nom:              %s\n", status["name"])
-	fmt.Printf("   Courant cible:    %.2fA\n", status["current_target"])
-	fmt.Printf("   Erreur précédente: %.1fW\n", status["previous_error"])
-	fmt.Printf("   Erreur intégrale:  %.1f\n", status["integral_error"])
-	fmt.Printf("   Puissance lissée:  %.1fW\n", status["smoothed_power"])
-	fmt.Printf("   Resets:           %d\n", status["reset_count"])
+	fmt.Println("📊 État du régulateur:")
+	fmt.Printf("   Nom:                %s\n", status["name"])
+
+	if smoothedExcess, ok := status["smoothed_excess_power"]; ok {
+		fmt.Printf("   Surplus lissé:      %.0fW\n", smoothedExcess)
+	}
+	if isCharging, ok := status["is_charging"]; ok {
+		fmt.Printf("   En charge:          %v\n", isCharging)
+	}
+	if activations, ok := status["activation_count"]; ok {
+		fmt.Printf("   Activations:        %v\n", activations)
+	}
+	if deactivations, ok := status["deactivation_count"]; ok {
+		fmt.Printf("   Désactivations:     %v\n", deactivations)
+	}
+	if startTime, ok := status["charging_start_time"]; ok {
+		if t, ok := startTime.(time.Time); ok && !t.IsZero() {
+			fmt.Printf("   Début charge:       %s\n", t.Format("15:04:05"))
+		}
+	}
 
 	if config, ok := status["config"]; ok {
-		if pidConfig, ok := config.(regulation.PIDConfig); ok {
+		if openevseConfig, ok := config.(regulation.OpenEVSEConfig); ok {
 			fmt.Println("   Configuration:")
-			fmt.Printf("     Kp: %.6f, Ki: %.6f, Kd: %.6f\n", pidConfig.Kp, pidConfig.Ki, pidConfig.Kd)
+			fmt.Printf("     Réserve: %.0fW, Hystérésis: %.0fW\n", openevseConfig.ReservePowerW, openevseConfig.HysteresisPowerW)
+			fmt.Printf("     Temps min: %.0fs, Puissance min: %.0fW\n", openevseConfig.MinChargeTimeS, openevseConfig.MinChargePowerW)
 		}
 	}
 }
 
-func showHelp() {
-	fmt.Println("🎮 Guide d'utilisation - Delta PID:")
+func ovse_divert_showHelp() {
+	fmt.Println("🎮 Guide d'utilisation - Régulateur OpenEVSE:")
 	fmt.Println()
 	fmt.Println("📝 Formats d'entrée:")
-	fmt.Println("   -2000      → Surplus de 2000W, courant auto-ajusté")
-	fmt.Println("   200        → Import de 200W, courant auto-ajusté")
+	fmt.Println("   -2500      → Surplus de 2500W, courant auto-ajusté")
+	fmt.Println("   1000       → Import de 1000W, courant auto-ajusté")
 	fmt.Println("   2000 3     → Import 2000W avec 3A en cours de charge")
 	fmt.Println("   -1500 0    → Surplus 1500W sans charge actuelle")
 	fmt.Println()
 	fmt.Println("⚙️  Contrôles:")
 	fmt.Println("   hp/hc    → Changer de mode tarifaire")
-	fmt.Println("   reset    → Remettre le PID à zéro")
-	fmt.Println("   status   → Voir l'état interne du PID")
-	fmt.Println("   scenario → Lancer un scénario prédéfini")
+	fmt.Println("   reset    → Remettre le régulateur à zéro")
+	fmt.Println("   status   → Voir l'état interne du régulateur")
+	fmt.Println("   scenario → Lancer un scénario OpenEVSE")
+	fmt.Println()
+	fmt.Println("💡 Comportement OpenEVSE:")
+	fmt.Println("   • Seuil démarrage: 1400W + 600W (hystérésis) = 2000W")
+	fmt.Println("   • Temps minimum: 60s de charge obligatoire")
+	fmt.Println("   • Lissage: Attaque 15s / Décroissance 45s")
+	fmt.Println("   • Réserve: 100W pour éviter l'import")
 	fmt.Println()
 	fmt.Println("🧪 Tests de régulation:")
 	fmt.Println("   1. 'reset' pour partir de zéro")
-	fmt.Println("   2. '5000 0' → Import avec 0A, vérifier delta=0")
-	fmt.Println("   3. '5000 3' → Import avec 3A, vérifier réduction")
-	fmt.Println("   4. '-3000 0' → Surplus sans charge, vérifier démarrage")
-	fmt.Println("   5. '-1000 10' → Surplus faible avec charge, vérifier ajustement")
+	fmt.Println("   2. '1000 0' → Import avec 0A, vérifier pas de charge")
+	fmt.Println("   3. '-2500 0' → Surplus avec 0A, vérifier démarrage")
+	fmt.Println("   4. '-1000 10' → Surplus faible avec charge, vérifier maintien")
+	fmt.Println("   5. '500 15' → Import avec charge, vérifier arrêt après temps min")
 	fmt.Println()
 	fmt.Println("💡 Avantage format 'power amps':")
-	fmt.Println("   → Teste la vraie logique Delta PID avec feedback réel")
-	fmt.Println("   → Vérifie le calcul d'erreur basé sur puissance chargée")
+	fmt.Println("   → Teste la vraie logique OpenEVSE avec feedback réel")
+	fmt.Println("   → Vérifie l'hystérésis et le temps minimum de charge")
 }
 
-func updateConfig(config *regulation.PIDConfig, regulator *regulation.DeltaRegulator, logger *logrus.Logger) {
-	fmt.Println("⚙️ Configuration actuelle:")
-	fmt.Printf("   Kp: %.6f\n", config.Kp)
-	fmt.Printf("   Ki: %.6f\n", config.Ki)
-	fmt.Printf("   Kd: %.6f\n", config.Kd)
+func ovse_divert_updateConfig(config *regulation.PIDConfig, regulator *regulation.OpenEVSERegulator, logger *logrus.Logger) {
+	fmt.Println("⚙️ Configuration OpenEVSE actuelle:")
+	status := regulator.GetStatus()
+	if configData, ok := status["config"]; ok {
+		if openevseConfig, ok := configData.(regulation.OpenEVSEConfig); ok {
+			fmt.Printf("   Réserve: %.0fW\n", openevseConfig.ReservePowerW)
+			fmt.Printf("   Hystérésis: %.0fW\n", openevseConfig.HysteresisPowerW)
+			fmt.Printf("   Temps min charge: %.0fs\n", openevseConfig.MinChargeTimeS)
+			fmt.Printf("   Puissance min: %.0fW\n", openevseConfig.MinChargePowerW)
+		}
+	}
 	fmt.Println()
-	fmt.Println("📝 Entrez les nouveaux gains (ou Entrée pour garder):")
+	fmt.Println("📝 Entrez les nouveaux paramètres (ou Entrée pour garder):")
 
 	scanner := bufio.NewScanner(os.Stdin)
 
-	fmt.Print("   Kp: ")
+	// Pour l'instant, on ne permet que de modifier quelques paramètres clés
+	newConfig := regulation.OpenEVSEConfig{
+		ReservePowerW:    100.0,
+		HysteresisPowerW: 600.0,
+		MinChargeTimeS:   60.0,
+		SmoothingAttackS: 15.0,
+		SmoothingDecayS:  45.0,
+		MinChargePowerW:  1400.0,
+		PollIntervalS:    5.0,
+		MaxDeltaPerStepA: 3.0,
+	}
+
+	fmt.Print("   Hystérésis (W): ")
 	if scanner.Scan() && scanner.Text() != "" {
-		if kp, err := strconv.ParseFloat(scanner.Text(), 64); err == nil {
-			config.Kp = kp
+		if val, err := strconv.ParseFloat(scanner.Text(), 64); err == nil {
+			newConfig.HysteresisPowerW = val
 		}
 	}
 
-	fmt.Print("   Ki: ")
+	fmt.Print("   Temps min charge (s): ")
 	if scanner.Scan() && scanner.Text() != "" {
-		if ki, err := strconv.ParseFloat(scanner.Text(), 64); err == nil {
-			config.Ki = ki
+		if val, err := strconv.ParseFloat(scanner.Text(), 64); err == nil {
+			newConfig.MinChargeTimeS = val
 		}
 	}
 
-	fmt.Print("   Kd: ")
+	fmt.Print("   Puissance min démarrage (W): ")
 	if scanner.Scan() && scanner.Text() != "" {
-		if kd, err := strconv.ParseFloat(scanner.Text(), 64); err == nil {
-			config.Kd = kd
+		if val, err := strconv.ParseFloat(scanner.Text(), 64); err == nil {
+			newConfig.MinChargePowerW = val
 		}
 	}
 
 	// Recreer le régulateur avec la nouvelle config
-	deltaConfig := regulation.DeltaPIDConfig{
-		Kp:               config.Kp,
-		Ki:               config.Ki,
-		Kd:               config.Kd,
-		SmoothingFactor:  config.SmoothingFactor,
-		MaxTimeGap:       config.MaxTimeGap,
-		SurplusThreshold: config.SurplusThreshold,
-		ImportThreshold:  config.ImportThreshold,
-		MaxDeltaPerStep:  5.0,
-	}
-	*regulator = *regulation.NewDeltaRegulator(deltaConfig, logger)
-	fmt.Println("✅ Configuration mise à jour et Delta PID reset")
+	*regulator = *regulation.NewOpenEVSERegulator(newConfig, logger)
+	fmt.Println("✅ Configuration mise à jour et régulateur OpenEVSE reset")
 }
 
-func runScenario(regulator regulation.RegulationService, stepCount *int, baseTime time.Time, mode string, maxCurrent, maxHousePower float64, currentCharging *float64) {
-	fmt.Println("🎬 Lancement du scénario: ton exemple (1200W → -2000W → 200W → -100W)")
+func ovse_divert_runScenario(regulator regulation.RegulationService, stepCount *int, baseTime time.Time, mode string, maxCurrent, maxHousePower float64, currentCharging *float64) {
+	fmt.Println("🎬 Lancement du scénario OpenEVSE: Hystérésis et temps minimum")
 	fmt.Println()
 
 	scenarios := []struct {
@@ -361,10 +403,13 @@ func runScenario(regulator regulation.RegulationService, stepCount *int, baseTim
 		power float64
 		delay int
 	}{
-		{"Import initial", 1200, 0},
-		{"Surplus solaire", -2000, 5},
-		{"Grid remonte", 200, 5},
-		{"Petit surplus", -100, 5},
+		{"Import initial", 1500, 0},
+		{"Surplus faible", -1200, 10},
+		{"Surplus suffisant", -2500, 10},
+		{"Surplus important", -4000, 10},
+		{"Surplus diminue", -1000, 10},
+		{"Import léger", 500, 20},
+		{"Nouveau surplus", -2000, 10},
 	}
 
 	for i, scenario := range scenarios {
@@ -399,7 +444,7 @@ func runScenario(regulator regulation.RegulationService, stepCount *int, baseTim
 		}
 
 		fmt.Printf("🎬 Scénario %d: %s\n", i+1, scenario.name)
-		showOutput(scenario.power, output, *stepCount, *currentCharging)
+		ovse_divert_showOutput(scenario.power, output, *stepCount, *currentCharging)
 		fmt.Println()
 	}
 

@@ -30,8 +30,8 @@ type Manager struct {
 }
 
 func NewManager(cfg *config.Config, logger *logrus.Logger) *Manager {
-	// Créer le nouveau régulateur Delta PID par défaut
-	regulator, err := regulation.CreateRegulator(regulation.DeltaPIDRegulation, cfg, logger)
+	// Créer le régulateur OpenEVSE par défaut
+	regulator, err := regulation.CreateRegulator(regulation.OpenEVSERegulation, cfg, logger)
 	if err != nil {
 		logger.Fatalf("Failed to create regulator: %v", err)
 	}
